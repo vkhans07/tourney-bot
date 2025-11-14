@@ -362,13 +362,16 @@ class FakeTournamentManager(TournamentManager):
         next_power_of_2 = 2 ** math.ceil(math.log2(num_participants))
         byes_needed = next_power_of_2 - num_participants
         
-        # Add byes (None represents a bye)
-        bracket_participants = participants + [None] * byes_needed
+        # Create bracket dictionary with seeds as keys and names as values
         bracket_dictionary = tournament['participant_names'].copy()
+        # Add byes to the participants list (using negative seeds for byes)
         for i in range(byes_needed):
-            bracket_dictionary[(num_participants + i + 1)] = f"BYE {i + 1}"
-        # Generate bracket structure
-        tournament['bracket'] = self._generate_bracket(bracket_participants)
+            bye_seed = -(i + 1)  # Use negative seeds for byes
+            bracket_dictionary[bye_seed] = f"BYE {i + 1}"
+            participants.append(bye_seed)
+        
+        # Generate bracket structure using the dictionary
+        tournament['bracket'] = self._generate_bracket(bracket_dictionary)
         tournament['status'] = 'in_progress'
         tournament['current_round'] = 0
         tournament['match_counter'] = 0
@@ -393,17 +396,16 @@ class FakeTournamentManager(TournamentManager):
                 del tournament['participant_names'][seed]
                 tournament['participants'].remove(seed)
     
-    def _generate_bracket(self, participants: List) -> List:
+    def _generate_bracket(self, participants_names: Dict) -> List:
         """Generate a single elimination bracket structure"""
         # Sort & Match by Seed
-        bracket_list = sorted(participants.copy().items(), key=lambda x: x[0])
-
+        bracket_list = sorted(participants_names.copy().items(), key=lambda x: x[0])
         # Create initial round matches
         round_matches = []
-        for i in range(0, len(participants), 2):
+        for i in range(0, len(bracket_list), 2):
             match = {
-                'player1': participants[i],
-                'player2': participants[len(participants) - i - 1] if i + 1 < len(participants) else None,
+                'player1': bracket_list[i][0],
+                'player2': bracket_list[len(bracket_list) - i - 1][0] if i + 1 < len(bracket_list) else None,
                 'winner': None
             }
             round_matches.append(match)

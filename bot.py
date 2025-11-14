@@ -7,6 +7,7 @@ from tournament import TournamentManager
 from tournament import FakeTournamentManager
 import asyncio
 from datetime import timedelta
+from typing import Optional
 
 # Load environment variables
 load_dotenv()
@@ -372,9 +373,23 @@ async def fake_tournament_auto_start(interaction: discord.Interaction):
             )
             return
     
-    await handle_auto_start_for_round(interaction.guild_id, interaction.guild, interaction.channel, 0, fake_tournament_manager)
+    await handle_auto_start_for_round(
+        interaction.guild_id,
+        interaction.guild,
+        interaction.channel,
+        0,
+        fake_tournament_manager,
+        auto_advance=False,
+    )
 
-async def handle_auto_start_for_round(guild_id: int, guild: discord.Guild, channel: discord.TextChannel, round_num: int, manager: FakeTournamentManager = None):
+async def handle_auto_start_for_round(
+    guild_id: int,
+    guild: discord.Guild,
+    channel: discord.TextChannel,
+    round_num: int,
+    manager: FakeTournamentManager = None,
+    auto_advance: bool = True,
+):
     """Automatically process matches for a round using FakeTournamentManager's pick_winner"""
     if manager is None:
         manager = fake_tournament_manager
@@ -450,8 +465,67 @@ async def handle_auto_start_for_round(guild_id: int, guild: discord.Guild, chann
 
     # Check if there are any ready matches in the next round
     next_round = round_num + 1
-    if manager.get_ready_matches(guild_id, next_round):
-        await handle_auto_start_for_round(guild_id, guild, channel, next_round, manager)
+    ready_next = manager.get_ready_matches(guild_id, next_round)
+    if ready_next:
+        if auto_advance:
+            await handle_auto_start_for_round(guild_id, guild, channel, next_round, manager, auto_advance=True)
+        else:
+            await channel.send(
+                f"⏸️ Round {next_round + 1} is ready. Use `/fake_tournament_next_round` to continue."
+            )
+
+
+def get_next_ready_round(manager: FakeTournamentManager, guild_id: int) -> Optional[int]:
+    """Find the next round that has ready matches."""
+    tournament = manager.get_active_tournament(guild_id)
+    if not tournament or not tournament.get("bracket"):
+        return None
+
+    total_rounds = len(tournament["bracket"])
+    for round_num in range(total_rounds):
+        if manager.get_ready_matches(guild_id, round_num):
+            return round_num
+    return None
+
+
+@bot.tree.command(
+    name="fake_tournament_next_round",
+    description="Process the next round of matches for the fake tournament",
+)
+async def fake_tournament_next_round(interaction: discord.Interaction):
+    """Manual control to advance fake tournament rounds."""
+    tournament = fake_tournament_manager.get_active_tournament(interaction.guild_id)
+    if not tournament:
+        await interaction.response.send_message(
+            "❌ No active fake tournament found!", ephemeral=True
+        )
+        return
+
+    if tournament["status"] != "in_progress":
+        await interaction.response.send_message(
+            f"❌ Tournament is not in progress! Current status: {tournament['status']}",
+            ephemeral=True,
+        )
+        return
+
+    next_round = get_next_ready_round(fake_tournament_manager, interaction.guild_id)
+    if next_round is None:
+        await interaction.response.send_message(
+            "ℹ️ No matches are ready to be played right now.", ephemeral=True
+        )
+        return
+
+    await interaction.response.send_message(
+        f"▶️ Processing Round {next_round + 1}...", ephemeral=True
+    )
+    await handle_auto_start_for_round(
+        interaction.guild_id,
+        interaction.guild,
+        interaction.channel,
+        next_round,
+        fake_tournament_manager,
+        auto_advance=False,
+    )
 
 
 @bot.tree.command(name="tournament_status", description="View the current tournament status")
@@ -794,8 +868,20 @@ async def on_raw_poll_vote_update(payload: discord.RawPollVoteActionEvent):
                                    f"**Winner: {winner_name}** 🎉"
                         )
                         
+                        # Check if tournament is complete
+                        if result.get('tournament_complete'):
+                            tournament_manager.end_tournament(payload.guild_id)
+                            try:
+                                embed = discord.Embed(
+                                    title="🏆 Tournament Complete!",
+                                    description=f"**{winner_name}** is the champion! 🎉",
+                                    color=discord.Color.gold()
+                                )
+                                await channel.send(embed=embed)
+                            except Exception as e:
+                                print(f"Error sending tournament completion message: {e}")
                         # Create polls for next round if ready
-                        if result.get('next_round'):
+                        elif result.get('next_round'):
                             next_round = match_data['round'] + 1
                             await create_polls_for_round(guild, channel, next_round)
                         
@@ -891,6 +977,16 @@ async def tournament_check_polls(interaction: discord.Interaction):
                                f"**Winner: {winner_name}** 🎉"
                     )
                     
+                    # Check if tournament is complete
+                    if result.get('tournament_complete'):
+                        tournament_manager.end_tournament(interaction.guild_id)
+                        completion_embed = discord.Embed(
+                            title="🏆 Tournament Complete!",
+                            description=f"**{winner_name}** is the champion! 🎉",
+                            color=discord.Color.gold()
+                        )
+                        await interaction.followup.send(embed=completion_embed)
+                    
             except Exception as e:
                 print(f"Error checking poll for match {match_id}: {e}")
                 continue
@@ -902,16 +998,21 @@ async def tournament_check_polls(interaction: discord.Interaction):
             color=discord.Color.green()
         )
         
-        # Check if next round matches are ready
-        if updated_matches:
-            # Find the highest round that had matches updated
-            max_round = max(tournament['matches'][m]['round'] for m in updated_matches)
-            next_round = max_round + 1
+        # Check if tournament is still in progress before creating next round polls
+        if tournament_manager.is_tournament_complete(interaction.guild_id):
+            # Tournament completed, don't create more polls
+            await interaction.response.send_message(embed=embed)
+        else:
+            # Check if next round matches are ready
+            if updated_matches:
+                # Find the highest round that had matches updated
+                max_round = max(tournament['matches'][m]['round'] for m in updated_matches)
+                next_round = max_round + 1
+                
+                # Create polls for next round if ready
+                await create_polls_for_round(interaction.guild, interaction.channel, next_round)
             
-            # Create polls for next round if ready
-            await create_polls_for_round(interaction.guild, interaction.channel, next_round)
-        
-        await interaction.response.send_message(embed=embed)
+            await interaction.response.send_message(embed=embed)
     else:
         await interaction.response.send_message("ℹ️ No poll results to update yet. Polls may still be active or tied.", ephemeral=True)
 

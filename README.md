@@ -93,6 +93,14 @@ All commands use Discord's slash command interface. Type `/` in your server to s
 
 - `/tournament_reset` - Reset/delete the current tournament
 
+### Fake Tournament Commands (Seed-based simulation)
+
+- `/fake_tournament_create` - Create a seeded, fully simulated tournament
+- `/fake_tournament_join` - Add a player with a seed to the fake bracket
+- `/fake_tournament_remove` - Remove a player before the fake tournament starts
+- `/fake_tournament_auto_start` - Start the fake tournament (processes first round immediately)
+- `/fake_tournament_next_round` - Manually advance the fake tournament to the next ready round
+
 ## Usage Example
 
 1. **Create a tournament:**
