@@ -166,6 +166,30 @@ async def tournament_start(interaction: discord.Interaction):
     
     await interaction.response.send_message(embed=embed)
     
+    # Check channel permissions before creating polls
+    if not interaction.channel:
+        await interaction.followup.send("❌ Cannot determine channel. Please run this command in a text channel.", ephemeral=True)
+        return
+    
+    # Verify bot has necessary permissions
+    bot_member = interaction.guild.get_member(bot.user.id)
+    if bot_member:
+        permissions = interaction.channel.permissions_for(bot_member)
+        if not permissions.send_messages:
+            await interaction.followup.send(
+                "❌ Bot doesn't have permission to send messages in this channel!\n"
+                "Please ensure the bot has 'Send Messages' permission in this channel.",
+                ephemeral=True
+            )
+            return
+        if not permissions.view_channel:
+            await interaction.followup.send(
+                "❌ Bot doesn't have access to view this channel!\n"
+                "Please ensure the bot's role has access to this channel.",
+                ephemeral=True
+            )
+            return
+    
     # Handle byes (matches where one player gets a free pass)
     await handle_byes(interaction.guild_id, interaction.guild, interaction.channel)
     
@@ -385,15 +409,31 @@ async def create_polls_for_round(guild: discord.Guild, channel: discord.TextChan
         # Create poll
         poll = discord.Poll(
             question=f"Match {match_id}: Who wins?",
-            answers=[
-                discord.PollAnswer(text=player1_name),
-                discord.PollAnswer(text=player2_name)
-            ],
-            duration=timedelta(hours=24),  # Poll lasts 24 hours
-            allow_multiselect=False
+            duration=timedelta(hours=1),  # Poll lasts 1 hours
+            multiple=False
         )
+        poll.add_answer(text=player1_name)
+        poll.add_answer(text=player2_name)
         
         try:
+            # Check if bot has permission to send messages in this channel
+            bot_member = guild.get_member(bot.user.id)
+            if not bot_member:
+                print(f"Error: Bot member not found in guild {guild.name}")
+                return
+            
+            permissions = channel.permissions_for(bot_member)
+            
+            if not permissions.view_channel:
+                print(f"Error: Bot doesn't have access to view channel {channel.name} (Missing Access)")
+                print(f"  Solution: Go to channel settings > Permissions > Add bot role with 'View Channel' permission")
+                return
+            
+            if not permissions.send_messages:
+                print(f"Error: Bot doesn't have permission to send messages in channel {channel.name}")
+                print(f"  Solution: Go to channel settings > Permissions > Add bot role with 'Send Messages' permission")
+                return
+            
             message = await channel.send(
                 content=f"🏆 **{tournament['name']}** - Match {match_id}\n"
                        f"**{player1_name}** vs **{player2_name}**\n"
@@ -404,11 +444,26 @@ async def create_polls_for_round(guild: discord.Guild, channel: discord.TextChan
             # Store poll info
             tournament_manager.set_poll_info(guild.id, match_id, message.id, channel.id)
             
+        except discord.Forbidden as e:
+            error_code = getattr(e, 'code', None)
+            if error_code == 50001:
+                print(f"Error creating poll for match {match_id}: Missing Access (50001)")
+                print(f"  The bot cannot access channel '{channel.name}'")
+                print(f"  Solution:")
+                print(f"    1. Right-click the channel > Edit Channel > Permissions")
+                print(f"    2. Find your bot's role (or @everyone if bot uses default permissions)")
+                print(f"    3. Ensure 'View Channel' and 'Send Messages' are enabled")
+            elif error_code == 50013:
+                print(f"Error creating poll for match {match_id}: Missing Permissions (50013)")
+                print(f"  The bot doesn't have required permissions in channel '{channel.name}'")
+                print(f"  Solution: Ensure bot has 'Send Messages' permission in this channel")
+            else:
+                print(f"Error creating poll for match {match_id}: {e}")
         except Exception as e:
             print(f"Error creating poll for match {match_id}: {e}")
 
 @bot.event
-async def on_raw_poll_vote_update(payload: discord.RawPollVoteUpdateEvent):
+async def on_raw_poll_vote_update(payload: discord.RawPollVoteActionEvent):
     """Handle poll vote updates - automatically check results when poll ends"""
     # Check if this poll is associated with a tournament match
     match_info = tournament_manager.get_match_by_poll(payload.guild_id, payload.message_id)

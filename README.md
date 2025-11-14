@@ -33,6 +33,8 @@ A comprehensive Discord bot for managing tournaments among server members. Creat
    - ✅ Embed Links
    - ✅ Read Message History
    - ✅ Use Slash Commands
+   - ✅ Add Reactions (for polls)
+   - ✅ Use External Emojis (may be needed for polls)
 10. Copy the generated URL and open it in your browser to invite the bot to your server
 
 ### 2. Install Dependencies
