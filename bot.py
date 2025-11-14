@@ -4,6 +4,7 @@ from discord import app_commands
 import os
 from dotenv import load_dotenv
 from tournament import TournamentManager
+from tournament import FakeTournamentManager
 import asyncio
 from datetime import timedelta
 
@@ -18,6 +19,18 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 tournament_manager = TournamentManager()
+fake_tournament_manager = FakeTournamentManager()
+
+def get_tournament_manager(guild_id: int):
+    """Get the appropriate tournament manager for a guild"""
+    # Check if fake tournament exists
+    if fake_tournament_manager.get_active_tournament(guild_id):
+        return fake_tournament_manager
+    # Check if regular tournament exists
+    if tournament_manager.get_active_tournament(guild_id):
+        return tournament_manager
+    # Default to regular manager
+    return tournament_manager
 
 @bot.event
 async def on_ready():
@@ -36,6 +49,11 @@ async def on_ready():
 )
 async def tournament_create(interaction: discord.Interaction, name: str, max_participants: int = 16, format: str = "single_elimination"):
     """Create a new tournament"""
+    # Check if a fake tournament is already active
+    if fake_tournament_manager.get_active_tournament(interaction.guild_id):
+        await interaction.response.send_message("❌ A fake tournament is already active! Please end it first or use `/fake_tournament_create` to create another fake tournament.", ephemeral=True)
+        return
+    
     if format not in ["single_elimination", "double_elimination"]:
         await interaction.response.send_message("❌ Invalid format! Use `single_elimination` or `double_elimination`.", ephemeral=True)
         return
@@ -65,11 +83,54 @@ async def tournament_create(interaction: discord.Interaction, name: str, max_par
     
     await interaction.response.send_message(embed=embed)
 
+@bot.tree.command(name='fake_tournament_create', description='Create a new fake tournament')
+async def fake_tournament_create(interaction: discord.Interaction, name: str, max_participants: int = 16, format: str = "single_elimination"):
+    """Create a new fake tournament"""
+    # Check if a regular tournament is already active
+    if tournament_manager.get_active_tournament(interaction.guild_id):
+        await interaction.response.send_message("❌ A regular tournament is already active! Please end it first or use `/tournament_create` to create another tournament.", ephemeral=True)
+        return
+    
+    if format not in ["single_elimination", "double_elimination"]:
+        await interaction.response.send_message("❌ Invalid format! Use `single_elimination` or `double_elimination`.", ephemeral=True)
+        return
+    
+    if max_participants < 2 or max_participants > 64:
+        await interaction.response.send_message("❌ Maximum participants must be between 2 and 64.", ephemeral=True)
+        return
+    
+    tournament = fake_tournament_manager.create_tournament(
+        guild_id=interaction.guild_id,
+        name=name,
+        max_participants=max_participants,
+        format=format,
+        creator_id=interaction.user.id
+    )
+    
+    embed = discord.Embed(
+        title=f"🏆 Fake Tournament Created: {name}",
+        description=f"Fake tournament has been created successfully!",
+        color=discord.Color.red()
+    )
+    embed.add_field(name="Format", value=format.replace("_", " ").title(), inline=True)
+    embed.add_field(name="Max Participants", value=str(max_participants), inline=True)
+    embed.add_field(name="Current Participants", value="0", inline=True)
+    embed.add_field(name="Status", value="Registration Open", inline=False)
+    embed.set_footer(text=f"Created by {interaction.user.display_name}")
+    
+    await interaction.response.send_message(embed=embed)
+
+
 @bot.tree.command(name="tournament_join", description="Join the current tournament")
 async def tournament_join(interaction: discord.Interaction):
     """Join the current tournament"""
     tournament = tournament_manager.get_active_tournament(interaction.guild_id)
     
+    # Check if there's a fake tournament active instead
+    if fake_tournament_manager.get_active_tournament(interaction.guild_id):
+        await interaction.response.send_message("❌ A fake tournament is active! Use `/fake_tournament_join` to join that instead.", ephemeral=True)
+        return
+
     if not tournament:
         await interaction.response.send_message("❌ No active tournament found! Create one first with `/tournament_create`.", ephemeral=True)
         return
@@ -101,6 +162,32 @@ async def tournament_join(interaction: discord.Interaction):
     
     await interaction.response.send_message(embed=embed)
 
+@bot.tree.command(name='fake_tournament_join', description='Join the fake tournament')
+async def fake_tournament_join(interaction: discord.Interaction, seed: int, player_name: str):
+    """Join the fake tournament"""
+    tournament = fake_tournament_manager.get_active_tournament(interaction.guild_id)
+    if not tournament:
+        await interaction.response.send_message("❌ No active fake tournament found! Create one first with `/fake_tournament_create`.", ephemeral=True)
+        return
+    if tournament['status'] != 'registration':
+        await interaction.response.send_message("❌ Tournament registration is closed!", ephemeral=True)
+        return
+    if len(tournament['participants']) >= tournament['max_participants']:
+        await interaction.response.send_message("❌ Tournament is full!", ephemeral=True)
+        return
+    if seed in tournament['participants']:
+        await interaction.response.send_message("❌ This seed is already taken!", ephemeral=True)
+        return
+    fake_tournament_manager.add_participant(interaction.guild_id, seed, player_name)
+
+    embed = discord.Embed(
+        title="✅ Joined Tournament",
+        description=f"{player_name} successfully joined **{tournament['name']}** with seed {seed}!",
+        color=discord.Color.green()
+    )
+    embed.add_field(name="Participants", value=f"{len(tournament['participants'])}/{tournament['max_participants']}", inline=True)
+    await interaction.response.send_message(embed=embed)
+
 @bot.tree.command(name="tournament_leave", description="Leave the current tournament")
 async def tournament_leave(interaction: discord.Interaction):
     """Leave the current tournament"""
@@ -128,9 +215,37 @@ async def tournament_leave(interaction: discord.Interaction):
     
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="tournament_start", description="Start the tournament (closes registration)")
+@bot.tree.command(name='fake_tournament_remove', description='Remove a participant from the fake tournament')
+async def fake_tournament_remove(interaction: discord.Interaction, player_name: str):
+    '''Remove a participant from the fake tournament'''
+    tournament = fake_tournament_manager.get_active_tournament(interaction.guild_id)
+    if not tournament:
+        await interaction.response.send_message("❌ No active fake tournament found!", ephemeral=True)
+        return
+    if tournament['status'] != 'registration':
+        await interaction.response.send_message("❌ Tournament registration is closed!", ephemeral=True)
+        return
+    if player_name not in tournament['participant_names'].values():
+        await interaction.response.send_message(f"❌ {player_name} is not registered for this tournament!", ephemeral=True)
+        return
+    
+    fake_tournament_manager.remove_participant(interaction.guild_id, player_name)
+    embed = discord.Embed(
+        title="✅ Removed Participant",
+        description=f"{player_name} has been removed from **{tournament['name']}**!",
+        color=discord.Color.red()
+    )
+    embed.add_field(name="Participants", value=f"{len(tournament['participants'])}/{tournament['max_participants']}", inline=True)
+    await interaction.response.send_message(embed=embed)
+
+@bot.tree.command(name="tournament_start", description="Start the tournament (closes registration). Uses polls to determine match winners.")
 async def tournament_start(interaction: discord.Interaction):
     """Start the tournament"""
+    # Check if a fake tournament is active instead
+    if fake_tournament_manager.get_active_tournament(interaction.guild_id):
+        await interaction.response.send_message("❌ A fake tournament is active! Use `/fake_tournament_auto_start` to start that instead.", ephemeral=True)
+        return
+    
     tournament = tournament_manager.get_active_tournament(interaction.guild_id)
     
     if not tournament:
@@ -195,6 +310,149 @@ async def tournament_start(interaction: discord.Interaction):
     
     # Create polls for first round matches
     await create_polls_for_round(interaction.guild, interaction.channel, 0)
+
+@bot.tree.command(name="fake_tournament_auto_start", description="Start the fake tournament, using seeding to determine probability of winning.")
+async def fake_tournament_auto_start(interaction: discord.Interaction):
+    """Start the fake tournament, using seeding to determine probability of winning."""
+    tournament = fake_tournament_manager.get_active_tournament(interaction.guild_id)
+    if not tournament:
+        await interaction.response.send_message("❌ No active fake tournament found! Create one first with `/fake_tournament_create`.", ephemeral=True)
+        return
+    
+    if tournament['creator_id'] != interaction.user.id and not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("❌ Only the tournament creator or an administrator can start the tournament!", ephemeral=True)
+        return
+    
+    if len(tournament['participants']) < 2:
+        await interaction.response.send_message("❌ Need at least 2 participants to start a tournament!", ephemeral=True)
+        return
+    
+    if tournament['status'] != 'registration':
+        await interaction.response.send_message(f"❌ Tournament has already started! Current status: {tournament['status']}", ephemeral=True)
+        return
+
+    fake_tournament_manager.start_tournament(interaction.guild_id)
+    bracket = fake_tournament_manager.get_bracket(interaction.guild_id)
+    
+    embed = discord.Embed(
+        title=f"🚀 Tournament Started: {tournament['name']}",
+        description="Registration is now closed and the bracket has been generated!",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="Participants", value=str(len(tournament['participants'])), inline=True)
+    embed.add_field(name="Format", value=tournament['format'].replace("_", " ").title(), inline=True)
+    
+    bracket_text = fake_tournament_manager.format_bracket(interaction.guild_id)
+    if bracket_text:
+        embed.add_field(name="Bracket", value=bracket_text[:1024], inline=False)
+    
+    await interaction.response.send_message(embed=embed)
+    
+    # Check channel permissions before moving on
+    if not interaction.channel:
+        await interaction.followup.send("❌ Cannot determine channel. Please run this command in a text channel.", ephemeral=True)
+        return
+    
+    # Verify bot has necessary permissions
+    bot_member = interaction.guild.get_member(bot.user.id)
+    if bot_member:
+        permissions = interaction.channel.permissions_for(bot_member)
+        if not permissions.send_messages:
+            await interaction.followup.send(
+                "❌ Bot doesn't have permission to send messages in this channel!\n"
+                "Please ensure the bot has 'Send Messages' permission in this channel.",
+                ephemeral=True
+            )
+            return
+        if not permissions.view_channel:
+            await interaction.followup.send(
+                "❌ Bot doesn't have access to view this channel!\n"
+                "Please ensure the bot's role has access to this channel.",
+                ephemeral=True
+            )
+            return
+    
+    await handle_auto_start_for_round(interaction.guild_id, interaction.guild, interaction.channel, 0, fake_tournament_manager)
+
+async def handle_auto_start_for_round(guild_id: int, guild: discord.Guild, channel: discord.TextChannel, round_num: int, manager: FakeTournamentManager = None):
+    """Automatically process matches for a round using FakeTournamentManager's pick_winner"""
+    if manager is None:
+        manager = fake_tournament_manager
+    
+    tournament = manager.get_active_tournament(guild_id)
+    if not tournament:
+        return
+    if tournament['status'] != 'in_progress':
+        return
+    
+    ready_matches = manager.get_ready_matches(guild_id, round_num)
+    if not ready_matches:
+        return
+    
+    # Process each match in this round
+    for match_info in ready_matches:
+        match_id = match_info['match_id']
+        player1_seed = match_info['player1']  # In FakeTournamentManager, these are seeds
+        player2_seed = match_info['player2']
+        
+        # Handle byes (None or negative seeds)
+        if player1_seed is None or (isinstance(player1_seed, int) and player1_seed <= 0):
+            # Player 2 wins by default
+            winner_seed = player2_seed
+        elif player2_seed is None or (isinstance(player2_seed, int) and player2_seed <= 0):
+            # Player 1 wins by default
+            winner_seed = player1_seed
+        else:
+            # Pick winner based on seed probabilities
+            winner_seed = tournament_manager.pick_winner(player1_seed, player2_seed)
+        
+        # Get player names for display
+        player1_name = tournament['participant_names'].get(player1_seed, f"Seed {player1_seed}" if player1_seed else "BYE")
+        player2_name = tournament['participant_names'].get(player2_seed, f"Seed {player2_seed}" if player2_seed else "BYE")
+        winner_name = tournament['participant_names'].get(winner_seed, f"Seed {winner_seed}")
+        
+        # Report the match result (winner_seed is used as the ID in FakeTournamentManager)
+        result = manager.report_match_result(guild_id, match_id, winner_seed)
+        
+        if result.get('success'):
+            # Send notification about the match result
+            try:
+                embed = discord.Embed(
+                    title=f"⚔️ Match {match_id} Complete",
+                    description=f"**{player1_name}** vs **{player2_name}**\n**Winner: {winner_name}** 🎉",
+                    color=discord.Color.green()
+                )
+                await channel.send(embed=embed)
+            except Exception as e:
+                print(f"Error sending match result notification: {e}")
+
+    # Check if the tournament is complete
+    if manager.is_tournament_complete(guild_id):
+        manager.end_tournament(guild_id)
+        try:
+            # Get final winner
+            final_round = len(tournament['bracket']) - 1
+            if final_round >= 0 and tournament['bracket'][final_round]:
+                final_match = tournament['bracket'][final_round][0]
+                if final_match.get('winner'):
+                    winner_seed = final_match['winner']
+                    winner_name = tournament['participant_names'].get(winner_seed, f"Seed {winner_seed}")
+                    
+                    embed = discord.Embed(
+                        title="🏆 Tournament Complete!",
+                        description=f"**{winner_name}** is the champion! 🎉",
+                        color=discord.Color.gold()
+                    )
+                    await channel.send(embed=embed)
+        except Exception as e:
+            print(f"Error sending tournament completion message: {e}")
+        return
+
+    # Check if there are any ready matches in the next round
+    next_round = round_num + 1
+    if manager.get_ready_matches(guild_id, next_round):
+        await handle_auto_start_for_round(guild_id, guild, channel, next_round, manager)
+
 
 @bot.tree.command(name="tournament_status", description="View the current tournament status")
 async def tournament_status(interaction: discord.Interaction):
@@ -665,4 +923,3 @@ if __name__ == "__main__":
         print("Please create a .env file with your Discord bot token.")
     else:
         bot.run(token)
-

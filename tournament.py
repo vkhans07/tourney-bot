@@ -282,6 +282,20 @@ class TournamentManager:
         if tournament:
             tournament['status'] = 'completed'
     
+    def is_tournament_complete(self, guild_id: int) -> bool:
+        """Check if the tournament is complete"""
+        tournament = self.get_active_tournament(guild_id)
+        if not tournament or not tournament['bracket']:
+            return False
+        
+        # Check if final match has a winner
+        final_round = len(tournament['bracket']) - 1
+        if final_round >= 0 and tournament['bracket'][final_round]:
+            final_match = tournament['bracket'][final_round][0]
+            return final_match.get('winner') is not None
+        
+        return tournament['status'] == 'completed'
+    
     def reset_tournament(self, guild_id: int):
         """Reset/delete the tournament"""
         if guild_id in self.tournaments:
@@ -331,3 +345,96 @@ class TournamentManager:
                 }
         return None
 
+class FakeTournamentManager(TournamentManager):
+    def start_tournament(self, guild_id: int):
+        """Start the tournament and generate bracket"""
+        tournament = self.get_active_tournament(guild_id)
+        if not tournament:
+            return
+        
+        participants = tournament['participants'].copy()
+        num_participants = len(participants)
+        
+        if num_participants < 2:
+            return
+        
+        # Pad to next power of 2 with byes
+        next_power_of_2 = 2 ** math.ceil(math.log2(num_participants))
+        byes_needed = next_power_of_2 - num_participants
+        
+        # Add byes (None represents a bye)
+        bracket_participants = participants + [None] * byes_needed
+        bracket_dictionary = tournament['participant_names'].copy()
+        for i in range(byes_needed):
+            bracket_dictionary[(num_participants + i + 1)] = f"BYE {i + 1}"
+        # Generate bracket structure
+        tournament['bracket'] = self._generate_bracket(bracket_participants)
+        tournament['status'] = 'in_progress'
+        tournament['current_round'] = 0
+        tournament['match_counter'] = 0
+
+        # Initialize matches
+        self._initialize_matches(guild_id)
+    
+    def add_participant(self, guild_id: int, seed: int, player_name: str):
+        """Add a participant to the tournament"""
+        tournament = self.get_active_tournament(guild_id)
+        if tournament and tournament['status'] == 'registration':
+            if seed not in tournament['participants']:
+                tournament['participants'].append(seed)
+                tournament['participant_names'][seed] = player_name
+
+    def remove_participant(self, guild_id: int, player_name: str):
+        """Remove a participant from the tournament"""
+        tournament = self.get_active_tournament(guild_id)
+        if tournament and tournament['status'] == 'registration':
+            if player_name in tournament['participant_names'].values():
+                seed = list(tournament['participant_names'].keys())[list(tournament['participant_names'].values()).index(player_name)]
+                del tournament['participant_names'][seed]
+                tournament['participants'].remove(seed)
+    
+    def _generate_bracket(self, participants: List) -> List:
+        """Generate a single elimination bracket structure"""
+        # Sort & Match by Seed
+        bracket_list = sorted(participants.copy().items(), key=lambda x: x[0])
+
+        # Create initial round matches
+        round_matches = []
+        for i in range(0, len(participants), 2):
+            match = {
+                'player1': participants[i],
+                'player2': participants[len(participants) - i - 1] if i + 1 < len(participants) else None,
+                'winner': None
+            }
+            round_matches.append(match)
+        
+
+        bracket = [round_matches]
+        
+        # Generate subsequent rounds
+        while len(round_matches) > 1:
+            next_round = []
+            for i in range(0, len(round_matches), 2):
+                match = {
+                    'player1': None,  # Will be winner of previous match
+                    'player2': None,
+                    'winner': None
+                }
+                next_round.append(match)
+            bracket.append(next_round)
+            round_matches = next_round
+        
+        return bracket
+
+    def pick_winner(self, player1_seed: int, player2_seed: int) -> int:
+        if player1_seed <= 0:
+            return player2_seed
+        if player2_seed <= 0:
+            return player1_seed
+        pick_me = random.randint(1, player1_seed + player2_seed)
+        if pick_me <= player1_seed:
+            return player1_seed
+        else:
+            return player2_seed
+    
+    
