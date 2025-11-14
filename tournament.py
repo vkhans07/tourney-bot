@@ -193,7 +193,7 @@ class TournamentManager:
     
     def _get_player_name(self, player_id, participant_names: Dict) -> str:
         """Get display name for a player"""
-        if player_id is None:
+        if player_id is None or (isinstance(player_id, int) and player_id <= 0):
             return "BYE"
         return participant_names.get(player_id, f"User {player_id}")
     

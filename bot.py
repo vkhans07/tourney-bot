@@ -419,7 +419,7 @@ async def handle_auto_start_for_round(
             winner_seed = player1_seed
         else:
             # Pick winner based on seed probabilities
-            winner_seed = tournament_manager.pick_winner(player1_seed, player2_seed)
+            winner_seed = fake_tournament_manager.pick_winner(player1_seed, player2_seed)
         
         # Get player names for display
         player1_name = tournament['participant_names'].get(player1_seed, f"Seed {player1_seed}" if player1_seed else "BYE")
