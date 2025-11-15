@@ -76,26 +76,26 @@ async def tournament_create(interaction: discord.Interaction, name: str, max_par
             super().__init__(timeout=None)  # No timeout so buttons persist
         
         @discord.ui.button(label="Join", style=discord.ButtonStyle.green)
-        async def join_button_callback(self, button_interaction: discord.Interaction):
+        async def join_button_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
             # Get tournament and check if it exists
-            tournament = tournament_manager.get_active_tournament(button_interaction.guild_id)
+            tournament = tournament_manager.get_active_tournament(interaction.guild_id)
             if not tournament:
-                await button_interaction.response.send_message("❌ No active tournament found!", ephemeral=True)
+                await interaction.response.send_message("❌ No active tournament found!", ephemeral=True)
                 return
             
             if tournament['status'] != 'registration':
-                await button_interaction.response.send_message(f"❌ Tournament registration is closed! Current status: {tournament['status']}", ephemeral=True)
+                await interaction.response.send_message(f"❌ Tournament registration is closed! Current status: {tournament['status']}", ephemeral=True)
                 return
             
             if len(tournament['participants']) >= tournament['max_participants']:
-                await button_interaction.response.send_message("❌ Tournament is full!", ephemeral=True)
+                await interaction.response.send_message("❌ Tournament is full!", ephemeral=True)
                 return
             
-            if button_interaction.user.id in tournament['participants']:
-                await button_interaction.response.send_message("❌ You're already registered for this tournament!", ephemeral=True)
+            if interaction.user.id in tournament['participants']:
+                await interaction.response.send_message("❌ You're already registered for this tournament!", ephemeral=True)
                 return
             
-            tournament_manager.add_participant(button_interaction.guild_id, button_interaction.user.id, button_interaction.user.display_name)
+            tournament_manager.add_participant(interaction.guild_id, interaction.user.id, interaction.user.display_name)
             
             embed = discord.Embed(
                 title="✅ Joined Tournament",
@@ -107,46 +107,46 @@ async def tournament_create(interaction: discord.Interaction, name: str, max_par
                 value=f"{len(tournament['participants'])}/{tournament['max_participants']}", 
                 inline=True
             )
-            await button_interaction.response.send_message(embed=embed, ephemeral=True)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
         
         @discord.ui.button(label="Leave", style=discord.ButtonStyle.red)
-        async def leave_button_callback(self, button_interaction: discord.Interaction):
-            tournament = tournament_manager.get_active_tournament(button_interaction.guild_id)
+        async def leave_button_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
+            tournament = tournament_manager.get_active_tournament(interaction.guild_id)
             if not tournament:
-                await button_interaction.response.send_message("❌ No active tournament found!", ephemeral=True)
+                await interaction.response.send_message("❌ No active tournament found!", ephemeral=True)
                 return
             
             if tournament['status'] != 'registration':
-                await button_interaction.response.send_message("❌ Cannot leave tournament after registration has closed!", ephemeral=True)
+                await interaction.response.send_message("❌ Cannot leave tournament after registration has closed!", ephemeral=True)
                 return
             
-            if button_interaction.user.id not in tournament['participants']:
-                await button_interaction.response.send_message("❌ You're not registered for this tournament!", ephemeral=True)
+            if interaction.user.id not in tournament['participants']:
+                await interaction.response.send_message("❌ You're not registered for this tournament!", ephemeral=True)
                 return
             
-            tournament_manager.remove_participant(button_interaction.guild_id, button_interaction.user.id)
+            tournament_manager.remove_participant(interaction.guild_id, interaction.user.id)
             
             embed = discord.Embed(
                 title="👋 Left Tournament",
                 description=f"You've left **{tournament['name']}**.",
                 color=discord.Color.orange()
             )
-            await button_interaction.response.send_message(embed=embed, ephemeral=True)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
         
-        @discord.ui.button(label="Bracket", style=discord.ButtonStyle.blue)
-        async def bracket_button_callback(self, button_interaction: discord.Interaction):
-            tournament = tournament_manager.get_active_tournament(button_interaction.guild_id)
+        @discord.ui.button(label="Bracket", style=discord.ButtonStyle.blurple)
+        async def bracket_button_callback(self, interaction: discord.Interaction, button: discord.ui.Button):
+            tournament = tournament_manager.get_active_tournament(interaction.guild_id)
             if not tournament:
-                await button_interaction.response.send_message("❌ No active tournament found!", ephemeral=True)
+                await interaction.response.send_message("❌ No active tournament found!", ephemeral=True)
                 return
             
             if tournament['status'] == 'registration':
-                await button_interaction.response.send_message("❌ Tournament hasn't started yet! Use `/tournament_start` to begin.", ephemeral=True)
+                await interaction.response.send_message("❌ Tournament hasn't started yet! Use `/tournament_start` to begin.", ephemeral=True)
                 return
             
-            bracket_text = tournament_manager.format_bracket(button_interaction.guild_id)
+            bracket_text = tournament_manager.format_bracket(interaction.guild_id)
             if not bracket_text:
-                await button_interaction.response.send_message("❌ Bracket not available yet!", ephemeral=True)
+                await interaction.response.send_message("❌ Bracket not available yet!", ephemeral=True)
                 return
             
             embed = discord.Embed(
@@ -154,7 +154,7 @@ async def tournament_create(interaction: discord.Interaction, name: str, max_par
                 description=bracket_text,
                 color=discord.Color.purple()
             )
-            await button_interaction.response.send_message(embed=embed, ephemeral=True)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
     
     embed = discord.Embed(
         title=f"🏆 Tournament Created: {name}",
